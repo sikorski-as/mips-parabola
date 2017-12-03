@@ -182,15 +182,74 @@ OX_prepare:
 	
 OX_loop	:
 	sb $t3, ($t1)			# B
-	
 	sb $t4, 1($t1)			# G
-	
 	sb $t5, 2($t1)			# R
 
 	add $t1, $t1, 3			# zwiêksz iterator
 	blt $t1, $t2, OX_loop
 
 OX_scale:	
+	div $t0, $s0, 25		# t0 - jak du¿a podzia³ka
+					# jedna kreska podzia³ki bêdzie mia³a 5% rozmiaru obrazka
+					
+	sll $t1, $s5, 1			# t1 - ile kresek podzia³ki ma byæ na osi 
+	#sub $t1, $t1, 1		# (iterator ile kresek zosta³o jeszcze do narysowania)
+	
+	div $t2, $s1, $t1		# t2 - co ile pikseli ma byæ kreska podzia³ki
+
+	mul $t3, $t2, 3			# t3 - co ile bajtów jest kreska
+	
+					# t4 - miejsce rysowania (sta³a dla wewnêtrznej pêtli)
+	sra $t4, $s0, 1			# po³owa wysokoœci
+	mul $t4, $t4, $s3		# ustawiamy siê w odpowiedniej linii
+	add $t4, $t4, $s4		# teraz t4 - adres efektywny
+	add $t4, $t4, $t3		# ustawiamy siê na miejscu pierwszej kreski
+	
+	move $t5, $t4			# t5 - kopia t4 (tego bêdziemy u¿ywaæ do przesuwania siê w wewnêtrznej pêtli)
+OX_scale_loop:
+	
+	move $t5, $t4			# t5 - miejsce w bajtach 
+	move $t6, $t0			# t6 - ile pikseli kreski zosta³o do narysowania
+	# rysuj kreskê (wewnêtrzna pêtla):
+	OX_scale_inner_loop:
+		add $t5, $t5, $s3
+		sub $t6, $t6, 1
+		
+		# rysuj
+		li $t7, 0x33			# B
+		sb $t7, ($t5)
+	
+		li $t7, 0x25			# G
+		sb $t7, 1($t5)
+		
+		li $t7, 0x30			# R
+		sb $t7, 2($t5)
+		
+		bgtz $t6, OX_scale_inner_loop
+	
+	move $t5, $t4			# t5 - miejsce w bajtach 
+	move $t6, $t0			# t6 - ile pikseli kreski zosta³o do narysowania
+	# rysuj kreskê (wewnêtrzna pêtla):
+	OX_scale_inner_loop2:
+		sub $t5, $t5, $s3
+		sub $t6, $t6, 1
+		
+		# rysuj
+		li $t7, 0x33			# B
+		sb $t7, ($t5)
+	
+		li $t7, 0x25			# G
+		sb $t7, 1($t5)
+		
+		li $t7, 0x30			# R
+		sb $t7, 2($t5)
+		
+		bgtz $t6, OX_scale_inner_loop2
+	
+	# koniec wewnêtrznej pêtli
+	sub $t1, $t1, 1			# zmniejsz iterator
+	add $t4, $t4, $t3 
+	bgtz $t1, OX_scale_loop
 	
 	
 OY_prepare:
@@ -216,8 +275,72 @@ OY_loop	:
 	add $t1, $t1, $s3		# zwiêksz iterator
 	blt $t1, $t2, OY_loop
 
-OY_scale:
+##############################################################################################################################
+
+OY_scale:	
+	div $t0, $s1, 25		# t0 - jak du¿a podzia³ka
+					# jedna kreska podzia³ki bêdzie mia³a 5% rozmiaru obrazka
+					
+	sll $t1, $s5, 1			# t1 - ile kresek podzia³ki ma byæ na osi 
+	#sub $t1, $t1, 1		# (iterator ile kresek zosta³o jeszcze do narysowania)
 	
+	div $t2, $s1, $t1		# t2 - co ile pikseli ma byæ kreska podzia³ki
+
+	mul $t3, $t2, $s3		# t3 - co ile bajtów jest kreska
+	
+					# t4 - miejsce rysowania (sta³a dla wewnêtrznej pêtli)
+	sra $t4, $s1, 1			# po³owa szerokoœci
+	mul $t4, $t4, 3			# ustawiamy siê w odpowiedniej linii
+	add $t4, $t4, $s4		# teraz t4 - adres efektywny
+	add $t4, $t4, $t3		# ustawiamy siê na miejscu pierwszej kreski
+	
+	move $t5, $t4			# t5 - kopia t4 (tego bêdziemy u¿ywaæ do przesuwania siê w wewnêtrznej pêtli)
+OY_scale_loop:
+	
+	move $t5, $t4			# t5 - miejsce w bajtach 
+	move $t6, $t0			# t6 - ile pikseli kreski zosta³o do narysowania
+	# rysuj kreskê (wewnêtrzna pêtla):
+	OY_scale_inner_loop:
+		add $t5, $t5, 3
+		sub $t6, $t6, 1
+		
+		# rysuj
+		li $t7, 0x33			# B
+		sb $t7, ($t5)
+	
+		li $t7, 0x25			# G
+		sb $t7, 1($t5)
+		
+		li $t7, 0x30			# R
+		sb $t7, 2($t5)
+		
+		bgtz $t6, OY_scale_inner_loop
+	
+	move $t5, $t4			# t5 - miejsce w bajtach 
+	move $t6, $t0			# t6 - ile pikseli kreski zosta³o do narysowania
+	# rysuj kreskê (wewnêtrzna pêtla):
+	OY_scale_inner_loop2:
+		sub $t5, $t5, 3
+		sub $t6, $t6, 1
+		
+		# rysuj
+		li $t7, 0x33			# B
+		sb $t7, ($t5)
+	
+		li $t7, 0x25			# G
+		sb $t7, 1($t5)
+		
+		li $t7, 0x30			# R
+		sb $t7, 2($t5)
+		
+		bgtz $t6, OY_scale_inner_loop2
+	
+	# koniec wewnêtrznej pêtli
+	sub $t1, $t1, 1			# zmniejsz iterator
+	add $t4, $t4, $t3 
+	bgtz $t1, OY_scale_loop
+
+##############################################################################################################################	
 																			
 produce_parabola:			# pêtla wyliczaj¹ca wszystkie piksele
 	neg $t0, $s5			# t0 = - ZAKRES (Q16.16)
