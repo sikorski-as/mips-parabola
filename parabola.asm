@@ -19,11 +19,11 @@ text_error:		.asciiz "An error occured, closing\n"
 output:			.asciiz "output.bmp"
 
 bm:			.ascii "BM"	# dwa znaki informuj¹ce, ¿e to jest bitmapa
-.align 2		# wyrównaj do 4 bajtów
+.align 2				# wyrównaj do 4 bajtów
 header:			.space 52	# nag³ówek bitmapy
 
 # coefficients
-.align 2		# wyrównaj do 4 bajtów
+.align 2				# wyrównaj do 4 bajtów
 A:			.space 4
 B:			.space 4
 C:			.space 4
@@ -32,6 +32,7 @@ color_background:	.space 4
 color_scale:		.space 4
 color_parabola:		.space 4
 
+# Rejestry zachowywane u¿ywane jako zmienne globalne:
 # s0 - height (px)
 # s1 - width (px)
 # s2 - padding (bajty)
@@ -51,7 +52,7 @@ main:
 load_coefficients:
 	li $t2, -3			# zapisz wspó³czynnik A (Q16.16)
 	sll $t2, $t2, 14
-	sra $t2, $t2, 3
+	sra $t2, $t2, 4
 	sw $t2, A
 	
 	li $t1, -3			# zapisz wspó³czynnik B (Q16.16)
@@ -139,9 +140,85 @@ compute_delta:				# liczymy jak¹ "szerokoœæ" liczbow¹ ma jeden piksel
 	
 	move $s6, $t0 		
 
-# tutaj ustawiamy tlo (na razie pominiête)
-jal set_background
+set_background:
+	move $t0, $zero			# t0 - licznik iteruj¹cy po wysokoœci
+height_loop:
+	move $t1, $zero			# t1 - licznik interuj¹cy po szerokoœci
+width_loop:
+	move $t3, $zero			# t3 - adres sk³adowej koloru piksela
+	mul $t3, $t0, $s3		# t3 = t0 * (width * 3 + padding) 
+	mul $t5, $t1, 3			# mo¿na zrobiæ przesuniêciem i sum¹!!!!!!!!!!!!!!!	
+	add $t3, $t3, $t5		# t3 = t0 * (width * 3 + padding) + 3 * t1
 	
+	add $t3, $t3, $s4		# t3 = MEMORY BLOCK + height * (width * 3 + padding) + 3 * t1 (adres efektywny)
+	
+	li $t4, 0x23			# B
+	sb $t4, ($t3)
+	
+	li $t4, 0x1A			# G
+	sb $t4, 1($t3)
+
+	li $t4, 0x21			# R
+	sb $t4, 2($t3)
+
+	addi $t1, $t1, 1		# zwiêksz iterator szerokoœci bitmapy
+	blt $t1, $s1, width_loop
+	addi $t0, $t0, 1		# zwiêksz iterator wysokoœci bitmapy
+	beq $t0, $s0, OX_prepare		
+	b height_loop
+
+OX_prepare:
+	# oœ pozioma
+	sra $t0, $s0, 1			# t0 - po³owa wysokoœci
+	mul $t1, $t0, $s3		# t1 = po³owa wysokoœci * (szerokoœæ*3 + padding), iterator
+	add $t1, $t1, $s4		# t1 - adres efektywny, wartoœæ pocz¹tkowa iteratora
+	
+	mul $t2, $s1, 3			# t2 - warunek koñcowy
+	add $t2, $t2, $t1
+	
+	li $t3, 0x33			# B
+	li $t4, 0x25			# G
+	li $t5, 0x30			# R
+	
+OX_loop	:
+	sb $t3, ($t1)			# B
+	
+	sb $t4, 1($t1)			# G
+	
+	sb $t5, 2($t1)			# R
+
+	add $t1, $t1, 3			# zwiêksz iterator
+	blt $t1, $t2, OX_loop
+
+OX_scale:	
+	
+	
+OY_prepare:
+	# oœ pionowa
+	sra $t0, $s1, 1
+	mul $t1, $t0, 3
+	add $t1, $t1, $s4		# t1 - adres efektywny, wartoœæ pocz¹tkowa iteratora
+	
+	mul $t2, $s0, $s3
+	add $t2, $t2, $t1		# t2 - warunek koñcowy
+	
+OY_loop	:
+	# rysuj rysuj
+	li $t3, 0x33			# B
+	sb $t3, ($t1)
+	
+	li $t4, 0x25			# G
+	sb $t4, 1($t1)
+	
+	li $t5, 0x30			# R
+	sb $t5, 2($t1)
+
+	add $t1, $t1, $s3		# zwiêksz iterator
+	blt $t1, $t2, OY_loop
+
+OY_scale:
+	
+																			
 produce_parabola:			# pêtla wyliczaj¹ca wszystkie piksele
 	neg $t0, $s5			# t0 = - ZAKRES (Q16.16)
 	sll $t0, $t0, 14
@@ -158,69 +235,6 @@ parabola_loop:
 	
 	add $t2, $t2, $s6		# x = x + delta
 	blt $t2, $t1, parabola_loop
-
-b produce_scale
-compute:				# podprocedura licz¹ca wartoœæ funkcji kwadratowej i ustawiaj¹ca kolor piksela
-					# a0 - argument funkcji kwadratowej, notacja Q16.16
-					# a1 - - ZAKRES (Q16.16)
-					# a2 - + zakres (Q16.16)
-					
-	lw $t3, A			# t3 = A (Q16.16)
-	lw $t4, B			# t4 = B (Q16.16)
-	lw $t5, C			# t5 = C (Q16.16)
-	move $t6, $a0			# t6 - tu bêdzie wartoœæ funkcji
-	mul $t6, $t6, $t3		# t6 = x * A
-	sra $t6, $t6, 14
-	
-	add $t6, $t6, $t4		# t6 = x * A + B
-	mul $t6, $t6, $a0		# t6 = (x * A + B) * x
-	sra $t6, $t6, 14
-	
-	add $t6, $t6, $t5		# t6 = (x * A + B) * x + C
-	
-	blt $t6, $a1, return		# jeœli poza zakresem, to wyjdŸ
-	bgt $t6, $a2, return		# jeœli poza zakresem, to wyjdŸ
-	
-	add $a0, $a0, $a2		# œrodek uk³adu ma byæ w œrodku obrazka, dodajemy + ZAKRES
-	add $t6, $t6, $a2		# œrodek uk³adu ma byæ w œrodku obrazka, dodajemy + ZAKRES
-	
-	div $a0, $a0, $s6		# dzielimy przez deltê
-	sll $a0, $a0, 14
-
-	
-	div $t6, $t6, $s6
-	sll $t6, $t6, 14
-	
-	sra $a0, $a0, 14
-	sra $t6, $t6, 14		# teraz mamy wynik w pikselach 
-	
-	
-	
-	#sub $t6, $s0, $t6 		# uwzglêdniamy odwrócenie pionowe formatu bmp
-					# teraz w t6 mamy numer linii w tablicy pikseli
-	mul $t6, $t6, $s3			
-	mul $t7, $a0, 3
-	
-	add $t7, $t6, $t7
-	add $t7, $t7, $s4		# adres efektywny
-	
-	# t7 - adres efektywny
-	
-	li $t3, 0xF9			# B
-	sb $t3, ($t7)
-	
-	li $t4, 0xF9			# G
-	sb $t4, 1($t7)
-	
-	li $t5, 0xF9			# R
-	sb $t5, 2($t7)
-	
-return:
-	jr $ra		
-
-
-produce_scale:
-	# liczymy, liczymy, liczymy...
 
 open_file:
 	li $v0, 13			# otwieramy plik
@@ -337,32 +351,63 @@ error:
 	li $v0, 10
 	syscall
 
-# to na razie nie jest potrzebne:
-set_background:
-	move $t0, $zero			# t0 - licznik iteruj¹cy po wysokoœci
-height_loop:
-	move $t1, $zero			# t1 - licznik interuj¹cy po szerokoœci
-width_loop:
-	move $t3, $zero			# t3 - adres sk³adowej koloru piksela
-	mul $t3, $t0, $s3		# t3 = t0 * (width * 3 + padding) 
-	mul $t5, $t1, 3			# mo¿na zrobiæ przesuniêciem i sum¹!!!!!!!!!!!!!!!	
-	add $t3, $t3, $t5		# t3 = t0 * (width * 3 + padding) + 3 * t1
+compute:				# podprocedura licz¹ca wartoœæ funkcji kwadratowej i ustawiaj¹ca kolor piksela
+					# a0 - argument funkcji kwadratowej, notacja Q16.16
+					# a1 - - ZAKRES (Q16.16)
+					# a2 - + zakres (Q16.16)
+					
+	lw $t3, A			# t3 = A (Q16.16)
+	lw $t4, B			# t4 = B (Q16.16)
+	lw $t5, C			# t5 = C (Q16.16)
+	move $t6, $a0			# t6 - tu bêdzie wartoœæ funkcji
+	mul $t6, $t6, $t3		# t6 = x * A
+	sra $t6, $t6, 14
 	
-	add $t3, $t3, $s4		# t3 = MEMORY BLOCK + height * (width * 3 + padding) + 3 * t1 (adres efektywny)
+	add $t6, $t6, $t4		# t6 = x * A + B
+	mul $t6, $t6, $a0		# t6 = (x * A + B) * x
+	sra $t6, $t6, 14
 	
-	li $t4, 0x23			# B
-	sb $t4, ($t3)
+	add $t6, $t6, $t5		# t6 = (x * A + B) * x + C
 	
-	li $t4, 0x1A			# G
-	sb $t4, 1($t3)
+	blt $t6, $a1, return		# jeœli poza zakresem, to wyjdŸ
+	bgt $t6, $a2, return		# jeœli poza zakresem, to wyjdŸ
+	
+	add $a0, $a0, $a2		# œrodek uk³adu ma byæ w œrodku obrazka, dodajemy + ZAKRES
+	add $t6, $t6, $a2		# œrodek uk³adu ma byæ w œrodku obrazka, dodajemy + ZAKRES
+	
+	div $a0, $a0, $s6		# dzielimy przez deltê
+	sll $a0, $a0, 14
 
-	li $t4, 0x21			# R
-	sb $t4, 2($t3)
-
-	addi $t1, $t1, 1		# zwiêksz iterator szerokoœci bitmapy
-	blt $t1, $s1, width_loop
-	addi $t0, $t0, 1		# zwiêksz iterator wysokoœci bitmapy
-	beq $t0, $s0, produce_parabola		
-	b height_loop
-
+	
+	div $t6, $t6, $s6
+	sll $t6, $t6, 14
+	
+	sra $a0, $a0, 14
+	sra $t6, $t6, 14		# teraz mamy wynik w pikselach 
+	
+	
+	
+	#sub $t6, $s0, $t6 		# uwzglêdniamy odwrócenie pionowe formatu bmp
+					# teraz w t6 mamy numer linii w tablicy pikseli
+	mul $t6, $t6, $s3			
+	mul $t7, $a0, 3
+	
+	add $t7, $t6, $t7
+	add $t7, $t7, $s4		# adres efektywny
+	
+	# t7 - adres efektywny
+	
+	li $t3, 0xF9			# B
+	sb $t3, ($t7)
+	
+	li $t4, 0xF9			# G
+	sb $t4, 1($t7)
+	
+	li $t5, 0xF9			# R
+	sb $t5, 2($t7)
+	
+return:
 	jr $ra
+
+# to na razie nie jest potrzebne:
+
