@@ -38,7 +38,7 @@ color_parabola:		.space 4
 # s3 - width*3 + padding
 # s4 - pointer of allocated memory for the bitmap
 # s5 - range	--->	X <-s5, +s5>, Y <-s5, +s5>
-# s6 - delta x (szerokoœæ liczbowa piksela, zapisane w Q16.16)
+# s6 - delta x, delta y (szerokoœæ liczbowa piksela, zapisane w Q16.16)
 # s7 - deskryptor pliku
 
 .globl main
@@ -49,13 +49,19 @@ main:
 	syscall
 
 load_coefficients:
-	li $t2, 1
+	li $t2, -3			# zapisz wspó³czynnik A (Q16.16)
+	sll $t2, $t2, 14
+	sra $t2, $t2, 3
 	sw $t2, A
 	
-	li $t1, 2
+	li $t1, -3			# zapisz wspó³czynnik B (Q16.16)
+	sll $t1, $t1, 14
+	sra $t1, $t1, 2
 	sw $t1, B
 	
-	li $t0, 1
+	li $t0, 11			# zapisz wspó³czynnik C (Q16.16)
+	sll $t0, $t0, 14
+	sra $t0, $t0, 3
 	sw $t0, C 
 
 set_colors:
@@ -96,12 +102,12 @@ get_range: 				# czyta zakres skali
 	li $v0, 5
 	syscall
 	
-	move $s5, $v0 			# wczytaj do $s1 szerokoœæ obrazka (bez paddingu)
+	move $s5, $v0 			# wczytaj do $s5 zakres liczbowy osi
 	
 compute_padding:
 	move $t0, $s1
-	mul $t0, $t0, 3			# reszta z dzielenia szerokosci*3 przez 4 
-	andi $t0, $t0, 3		# do $t0 ³aduje wartoœæ (szerokoœæ*3) MOD 4
+	mul $t0, $t0, 3			# t0 = szerokoœæ * 3
+	andi $t0, $t0, 3		# t0 = (szerokoœæ * 3) MOD 4
 	
 	li $s2, 0			# domyœlnie zerowy padding
 	beqz $t0, allocate_memory	# wyliczone modulo = 0, padding równy zero, skaczemy do nastêpnego fragmentu programu
@@ -124,44 +130,94 @@ allocate_memory: 			# alokuje pamiêæ dla tablicy pikseli
 	
 	move $s4, $v0			# s4 = v0 (zapamiêtujemy adres zaalokwanej pamiêci)
 	
-compute_delta_x:			# liczymy jak¹ "szerokoœæ" liczbow¹ ma jeden piksel
-	move $t0, $s5
-	mul $t0, $t0, 2			# t0 = range * 2
-	sll $t0, $t0, 16		# konwersja t0 do Q16.16
+compute_delta:				# liczymy jak¹ "szerokoœæ" liczbow¹ ma jeden piksel
+	move $t0, $s5			
+	sll $t0, $t0, 1			# t0 = range * 2                 # mul $t0, $t0, 2
+	sll $t0, $t0, 14		# konwersja t0 do Q16.16	 # mo¿na wszystko za³atwiæ tak: sll $t0, $s5, 17 (chyba)
+	
 	div $t0, $t0, $s1		# t0 = t0 / width (wynik w Q16.16)
 	
 	move $s6, $t0 		
 
-set_background:
-	move $t0, $zero			# t0 - licznik iteruj¹cy po wysokoœci
-height_loop:
-	move $t1, $zero			# t1 - licznik interuj¹cy po szerokoœci
-width_loop:
-	move $t3, $zero			# t3 - adres sk³adowej koloru piksela
-	mul $t3, $t0, $s3		# t3 = t0 * (width * 3 + padding) 
-	mul $t5, $t1, 3	
-	add $t3, $t3, $t5		# t3 = t0 * (width * 3 + padding) + 3 * t1
-	
-	add $t3, $t3, $s4		# t3 = MEMORY BLOCK + height * (width * 3 + padding) + 3 * t1 (adres efektywny)
-	
-	li $t4, 0x23			# B
-	sb $t4, ($t3)
-	
-	li $t4, 0x1A			# G
-	sb $t4, 1($t3)
-
-	li $t4, 0x21			# R
-	sb $t4, 2($t3)
-
-
-	addi $t1, $t1, 1		# zwiêksz iterator szerokoœci bitmapy
-	blt $t1, $s1, width_loop
-	addi $t0, $t0, 1		# zwiêksz iterator wysokoœci bitmapy
-	beq $t0, $s0, produce_parabola		
-	b height_loop
+# tutaj ustawiamy tlo (na razie pominiête)
+jal set_background
 	
 produce_parabola:			# pêtla wyliczaj¹ca wszystkie piksele
-	# liczymy, liczymy, liczymy...
+	neg $t0, $s5			# t0 = - ZAKRES (Q16.16)
+	sll $t0, $t0, 14
+	move $t1, $s5			# t1 = + ZAKRES (Q16.16)
+	sll $t1, $t1, 14
+	
+	move $t2, $t0			# t2 - iterator po argumentach (po x), na pocz¹tku t2 = t0
+
+parabola_loop:
+	move $a0, $t2			# oblicz wartoœæ i ustaw piksel (je¿eli w zakresie)
+	move $a1, $t0
+	move $a2, $t1
+	jal compute
+	
+	add $t2, $t2, $s6		# x = x + delta
+	blt $t2, $t1, parabola_loop
+
+b produce_scale
+compute:				# podprocedura licz¹ca wartoœæ funkcji kwadratowej i ustawiaj¹ca kolor piksela
+					# a0 - argument funkcji kwadratowej, notacja Q16.16
+					# a1 - - ZAKRES (Q16.16)
+					# a2 - + zakres (Q16.16)
+					
+	lw $t3, A			# t3 = A (Q16.16)
+	lw $t4, B			# t4 = B (Q16.16)
+	lw $t5, C			# t5 = C (Q16.16)
+	move $t6, $a0			# t6 - tu bêdzie wartoœæ funkcji
+	mul $t6, $t6, $t3		# t6 = x * A
+	sra $t6, $t6, 14
+	
+	add $t6, $t6, $t4		# t6 = x * A + B
+	mul $t6, $t6, $a0		# t6 = (x * A + B) * x
+	sra $t6, $t6, 14
+	
+	add $t6, $t6, $t5		# t6 = (x * A + B) * x + C
+	
+	blt $t6, $a1, return		# jeœli poza zakresem, to wyjdŸ
+	bgt $t6, $a2, return		# jeœli poza zakresem, to wyjdŸ
+	
+	add $a0, $a0, $a2		# œrodek uk³adu ma byæ w œrodku obrazka, dodajemy + ZAKRES
+	add $t6, $t6, $a2		# œrodek uk³adu ma byæ w œrodku obrazka, dodajemy + ZAKRES
+	
+	div $a0, $a0, $s6		# dzielimy przez deltê
+	sll $a0, $a0, 14
+
+	
+	div $t6, $t6, $s6
+	sll $t6, $t6, 14
+	
+	sra $a0, $a0, 14
+	sra $t6, $t6, 14		# teraz mamy wynik w pikselach 
+	
+	
+	
+	#sub $t6, $s0, $t6 		# uwzglêdniamy odwrócenie pionowe formatu bmp
+					# teraz w t6 mamy numer linii w tablicy pikseli
+	mul $t6, $t6, $s3			
+	mul $t7, $a0, 3
+	
+	add $t7, $t6, $t7
+	add $t7, $t7, $s4		# adres efektywny
+	
+	# t7 - adres efektywny
+	
+	li $t3, 0xF9			# B
+	sb $t3, ($t7)
+	
+	li $t4, 0xF9			# G
+	sb $t4, 1($t7)
+	
+	li $t5, 0xF9			# R
+	sb $t5, 2($t7)
+	
+return:
+	jr $ra		
+
 
 produce_scale:
 	# liczymy, liczymy, liczymy...
@@ -280,9 +336,33 @@ error:
 	syscall
 	li $v0, 10
 	syscall
-	
-quadratic:				# podprocedura licz¹ca wartoœæ funkcji kwadratowej i ustawiaj¹ca kolor piksela
-					# a0 - argument funkcji kwadratowej, notacja Q16.16
-	# TODO
-	jr $ra	
 
+# to na razie nie jest potrzebne:
+set_background:
+	move $t0, $zero			# t0 - licznik iteruj¹cy po wysokoœci
+height_loop:
+	move $t1, $zero			# t1 - licznik interuj¹cy po szerokoœci
+width_loop:
+	move $t3, $zero			# t3 - adres sk³adowej koloru piksela
+	mul $t3, $t0, $s3		# t3 = t0 * (width * 3 + padding) 
+	mul $t5, $t1, 3			# mo¿na zrobiæ przesuniêciem i sum¹!!!!!!!!!!!!!!!	
+	add $t3, $t3, $t5		# t3 = t0 * (width * 3 + padding) + 3 * t1
+	
+	add $t3, $t3, $s4		# t3 = MEMORY BLOCK + height * (width * 3 + padding) + 3 * t1 (adres efektywny)
+	
+	li $t4, 0x23			# B
+	sb $t4, ($t3)
+	
+	li $t4, 0x1A			# G
+	sb $t4, 1($t3)
+
+	li $t4, 0x21			# R
+	sb $t4, 2($t3)
+
+	addi $t1, $t1, 1		# zwiêksz iterator szerokoœci bitmapy
+	blt $t1, $s1, width_loop
+	addi $t0, $t0, 1		# zwiêksz iterator wysokoœci bitmapy
+	beq $t0, $s0, produce_parabola		
+	b height_loop
+
+	jr $ra
